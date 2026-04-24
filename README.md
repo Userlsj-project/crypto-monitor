@@ -2,7 +2,7 @@
 
 실시간 암호화폐 가격 모니터링 및 AI 분석 알림 플랫폼
 
-Binance 공개 API로 5개 코인(BTC, ETH, BNB, XRP, SOL)의 가격을 30초마다 자동 수집하고, 사용자 정의 조건 충족 시 EXAONE AI 분석과 함께 이메일 알림을 발송합니다.
+Binance 공개 API로 5개 코인(BTC, ETH, BNB, XRP, SOL)의 가격을 30초마다 자동 수집하고, 사용자 정의 조건 충족 시 EXAONE AI 분석과 함께 알림을 발송합니다.
 
 ---
 
