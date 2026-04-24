@@ -2,7 +2,7 @@
 
 실시간 암호화폐 가격 모니터링 및 AI 분석 알림 플랫폼
 
-Binance 공개 API로 5개 코인(BTC, ETH, BNB, XRP, SOL)의 가격을 30초마다 자동 수집하고, 사용자 정의 조건 충족 시 EXAONE AI 분석과 함께 알림을 발송합니다.
+Binance 공개 API로 5개 코인(BTC, ETH, BNB, XRP, SOL)의 가격을 30초마다 자동 수집하고, 사용자 정의 조건 충족 시 EXAONE AI가 시장을 분석하여 알림 발동 기록에 저장합니다.
 
 ---
 
@@ -12,7 +12,6 @@ Binance 공개 API로 5개 코인(BTC, ETH, BNB, XRP, SOL)의 가격을 30초마
 graph TB
     subgraph External["외부 서비스"]
         BINANCE["🌐 Binance Public API<br/>(30초마다 가격 수집)"]
-        EMAIL["📧 이메일 서버<br/>(Gmail SMTP)"]
     end
 
     subgraph Docker["Docker Compose 스택"]
@@ -46,8 +45,7 @@ graph TB
     CELERY_W -->|"가격 저장"| PG
     CELERY_W -->|"알림 조건 체크"| OLLAMA
     OLLAMA -->|"AI 분석 텍스트"| CELERY_W
-    CELERY_W -->|"웹훅"| N8N
-    N8N -->|"알림 발송"| EMAIL
+    CELERY_W -->|"AlertLog 저장"| PG
     DJANGO <--> PG
     DJANGO <--> REDIS
     CELERY_W <--> REDIS
@@ -66,8 +64,6 @@ sequenceDiagram
     participant Binance as Binance API
     participant DB as PostgreSQL
     participant AI as EXAONE (Ollama)
-    participant n8n as n8n
-    participant Email as 이메일
 
     loop 30초마다
         Beat->>Worker: fetch_coin_prices 태스크 발행
@@ -82,9 +78,7 @@ sequenceDiagram
         alt 조건 충족 (목표가 이상/이하)
             Worker->>AI: 시장 분석 요청
             AI-->>Worker: 분석 텍스트 반환
-            Worker->>DB: AlertLog 저장
-            Worker->>n8n: 웹훅 POST
-            n8n->>Email: 알림 이메일 발송
+            Worker->>DB: AlertLog 저장 (AI 분석 포함)
         end
     end
 ```
@@ -102,7 +96,7 @@ sequenceDiagram
 ### AI 알림 시스템
 - **알림 조건**: 코인별 목표가 이상/이하 설정
 - **AI 분석**: 조건 충족 시 EXAONE 3.5 2.4B가 시장 상황 분석
-- **알림 전달**: n8n 워크플로우 → Gmail 이메일 발송
+- **알림 기록**: AI 분석 결과와 함께 알림 발동 기록으로 저장, 대시보드에서 확인
 
 ### 시각화 대시보드
 - **실시간 카드**: 30초 자동 갱신, 가격 상승/하락 애니메이션
@@ -204,7 +198,7 @@ flowchart LR
 ### 1. 환경 변수 설정
 ```bash
 cp .env.example .env
-# .env 파일을 열어 비밀번호와 이메일 설정 입력
+# .env 파일을 열어 비밀번호 설정 입력
 ```
 
 ### 2. 실행
@@ -244,11 +238,4 @@ GRAFANA_ADMIN_PASSWORD=your-grafana-password
 # n8n
 N8N_BASIC_AUTH_USER=admin
 N8N_BASIC_AUTH_PASSWORD=your-n8n-password
-
-# 이메일 알림 (Gmail)
-EMAIL_HOST_USER=your-email@gmail.com
-EMAIL_HOST_PASSWORD=your-app-password
-
-# n8n 웹훅 URL (n8n에서 생성 후 입력)
-N8N_WEBHOOK_URL=http://n8n:5678/webhook/your-webhook-id
 ```
