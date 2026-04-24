@@ -1,0 +1,520 @@
+{% extends 'base.html' %}
+
+{% block title %}알림 관리 - Crypto Monitor{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* ─── 알림 관리 페이지 스타일 ─── */
+    .alert-card {
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 12px;
+    }
+
+    /* ─── 알림 테이블 행 ─── */
+    .alert-row-active { border-left: 3px solid var(--accent-green); }
+    .alert-row-inactive { border-left: 3px solid var(--text-muted); opacity: 0.6; }
+
+    /* ─── 조건 뱃지 ─── */
+    .badge-above {
+        background: rgba(63, 185, 80, 0.15);
+        color: var(--accent-green);
+        border: 1px solid rgba(63, 185, 80, 0.3);
+        font-size: 0.75rem;
+    }
+
+    .badge-below {
+        background: rgba(248, 81, 73, 0.15);
+        color: var(--accent-red);
+        border: 1px solid rgba(248, 81, 73, 0.3);
+        font-size: 0.75rem;
+    }
+
+    /* ─── 알림 생성 폼 ─── */
+    .form-card {
+        background: linear-gradient(135deg, #161b22 0%, #1c2128 100%);
+        border: 1px solid var(--card-border);
+        border-radius: 12px;
+    }
+
+    .form-control, .form-select {
+        background: #0d1117;
+        border-color: var(--card-border);
+        color: #e6edf3;
+    }
+
+    .form-control:focus, .form-select:focus {
+        background: #0d1117;
+        border-color: var(--accent-blue);
+        color: #e6edf3;
+        box-shadow: 0 0 0 0.2rem rgba(88, 166, 255, 0.15);
+    }
+
+    /* ─── AI 분석 텍스트 ─── */
+    .ai-text {
+        font-size: 0.85rem;
+        color: #8b949e;
+        font-style: italic;
+        line-height: 1.6;
+        max-width: 400px;
+        white-space: normal;
+        word-break: break-word;
+    }
+
+    /* ─── 토글 스위치 ─── */
+    .form-check-input:checked {
+        background-color: var(--accent-green);
+        border-color: var(--accent-green);
+    }
+
+    /* ─── 알림 로그 테이블 ─── */
+    .log-row:hover { background: rgba(88, 166, 255, 0.03); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1><i class="bi bi-bell me-2 text-warning"></i>알림 관리</h1>
+    <p class="text-muted mb-0">가격 목표 알림 설정 | EXAONE AI 분석 자동 포함</p>
+</div>
+
+<div class="row g-4">
+
+    <!-- ─── 좌측: 알림 생성 폼 ─── -->
+    <div class="col-lg-4">
+        <div class="form-card p-4">
+            <h6 class="fw-bold mb-3">
+                <i class="bi bi-plus-circle me-2 text-primary"></i>새 알림 추가
+            </h6>
+            <form id="alert-form">
+                <!-- 코인 선택 -->
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-muted">코인 선택</label>
+                    <select class="form-select" id="form-coin" required>
+                        <option value="">── 코인 선택 ──</option>
+                        {% for coin in coins %}
+                        <option value="{{ coin.id }}" data-symbol="{{ coin.symbol }}">
+                            {{ coin.base_symbol }} ({{ coin.name }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- 조건 선택 -->
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-muted">알림 조건</label>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <input type="radio" class="btn-check" name="condition" id="cond-above" value="above">
+                            <label class="btn btn-outline-success w-100" for="cond-above">
+                                <i class="bi bi-arrow-up me-1"></i>이상
+                            </label>
+                        </div>
+                        <div class="col-6">
+                            <input type="radio" class="btn-check" name="condition" id="cond-below" value="below">
+                            <label class="btn btn-outline-danger w-100" for="cond-below">
+                                <i class="bi bi-arrow-down me-1"></i>이하
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 목표가 입력 -->
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-muted">목표가 (USDT)</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-dark border-secondary text-muted">$</span>
+                        <input type="number" class="form-control" id="form-price"
+                               placeholder="0.00" step="0.00000001" min="0" required>
+                    </div>
+                </div>
+
+                <!-- 현재가 참고 -->
+                <div class="mb-3 p-2 rounded" style="background:#0d1117; border:1px solid #30363d;">
+                    <div class="small text-muted">현재가 참고</div>
+                    <div id="current-price-ref" class="fw-bold text-primary">코인을 선택하세요</div>
+                </div>
+
+                <!-- 제출 버튼 -->
+                <button type="submit" class="btn btn-primary w-100" id="btn-create-alert">
+                    <i class="bi bi-bell-plus me-1"></i>알림 생성
+                </button>
+            </form>
+
+            <!-- 생성 결과 메시지 -->
+            <div id="form-result" class="mt-3" style="display:none;"></div>
+        </div>
+    </div>
+
+    <!-- ─── 우측: 알림 목록 ─── -->
+    <div class="col-lg-8">
+        <div class="alert-card">
+            <div class="p-3 border-bottom" style="border-color: var(--card-border) !important;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0 fw-bold">
+                        <i class="bi bi-list-check me-2"></i>알림 목록
+                        <span class="badge bg-secondary ms-2" id="alert-count">{{ alerts|length }}</span>
+                    </h6>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-secondary" onclick="loadAlerts()">
+                            <i class="bi bi-arrow-clockwise me-1"></i>새로고침
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>코인</th>
+                            <th>조건</th>
+                            <th>목표가</th>
+                            <th>상태</th>
+                            <th>마지막 발동</th>
+                            <th>관리</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alerts-table-body">
+                        {% for alert in alerts %}
+                        <tr class="alert-row-{% if alert.is_active %}active{% else %}inactive{% endif %}"
+                            id="alert-row-{{ alert.id }}">
+                            <td>
+                                <span class="fw-bold">{{ alert.coin.base_symbol }}</span>
+                                <small class="text-muted d-block">{{ alert.coin.name }}</small>
+                            </td>
+                            <td>
+                                <span class="badge badge-{% if alert.condition == 'above' %}above{% else %}below{% endif %} rounded-pill px-2 py-1">
+                                    {% if alert.condition == 'above' %}▲ 이상{% else %}▼ 이하{% endif %}
+                                </span>
+                            </td>
+                            <td class="fw-bold">${{ alert.target_price|floatformat:2 }}</td>
+                            <td>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox"
+                                           id="toggle-{{ alert.id }}"
+                                           {% if alert.is_active %}checked{% endif %}
+                                           onchange="toggleAlert({{ alert.id }})">
+                                </div>
+                            </td>
+                            <td>
+                                <small class="text-muted">
+                                    {% if alert.triggered_at %}
+                                        {{ alert.triggered_at|date:"m/d H:i" }}
+                                    {% else %}
+                                        미발동
+                                    {% endif %}
+                                </small>
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-danger"
+                                        onclick="deleteAlert({{ alert.id }})">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="6" class="text-center text-muted py-4">
+                                <i class="bi bi-bell-slash fs-4 d-block mb-2"></i>
+                                등록된 알림이 없습니다. 좌측 폼에서 추가하세요.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── 알림 발동 로그 ─── -->
+<div class="alert-card mt-4">
+    <div class="p-3 border-bottom" style="border-color: var(--card-border) !important;">
+        <h6 class="mb-0 fw-bold">
+            <i class="bi bi-journal-text me-2 text-info"></i>알림 발동 기록
+            <span class="text-muted small ms-2">(AI 분석 포함)</span>
+        </h6>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>시각</th>
+                    <th>코인</th>
+                    <th>발동 가격</th>
+                    <th>조건</th>
+                    <th>AI 분석</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in recent_logs %}
+                <tr class="log-row">
+                    <td>
+                        <small class="text-muted">{{ log.created_at|date:"m/d H:i:s" }}</small>
+                    </td>
+                    <td>
+                        <span class="fw-bold">{{ log.alert.coin.base_symbol }}</span>
+                    </td>
+                    <td>
+                        {% if log.triggered_price %}
+                            <span class="fw-bold">${{ log.triggered_price|floatformat:2 }}</span>
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge badge-{% if log.alert.condition == 'above' %}above{% else %}below{% endif %} rounded-pill px-2 py-1">
+                            목표가 ${{ log.alert.target_price|floatformat:2 }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if log.ai_analysis %}
+                            <span class="ai-text" title="{{ log.ai_analysis }}">
+                                {{ log.ai_analysis|truncatechars:80 }}
+                            </span>
+                        {% else %}
+                            <span class="text-muted small">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted py-4">
+                        <i class="bi bi-inbox fs-4 d-block mb-2"></i>
+                        알림 발동 기록이 없습니다.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ─── 현재가 참고 ───────────────────────────────────────────
+
+let latestPrices = {};
+
+async function fetchLatestPrices() {
+    try {
+        const response = await fetch('/api/coins/latest/');
+        const data = await response.json();
+        data.forEach(coin => {
+            if (coin.latest_price) {
+                latestPrices[coin.id] = parseFloat(coin.latest_price.price);
+            }
+        });
+    } catch(e) {
+        console.error('가격 조회 실패:', e);
+    }
+}
+
+// 코인 선택 시 현재가 표시
+document.getElementById('form-coin').addEventListener('change', function() {
+    const coinId = parseInt(this.value);
+    const refEl = document.getElementById('current-price-ref');
+
+    if (coinId && latestPrices[coinId]) {
+        const price = latestPrices[coinId];
+        refEl.textContent = `$${price.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+    } else {
+        refEl.textContent = '가격 데이터 없음';
+    }
+});
+
+// ─── 알림 생성 ───────────────────────────────────────────
+
+document.getElementById('alert-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const coinId = document.getElementById('form-coin').value;
+    const condition = document.querySelector('input[name="condition"]:checked')?.value;
+    const targetPrice = document.getElementById('form-price').value;
+    const resultEl = document.getElementById('form-result');
+    const btn = document.getElementById('btn-create-alert');
+
+    if (!coinId || !condition || !targetPrice) {
+        showFormResult('모든 필드를 입력해주세요.', 'danger');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading-spinner me-1"></span> 생성 중...';
+
+    try {
+        const response = await fetch('/api/alerts/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({
+                coin: parseInt(coinId),
+                condition: condition,
+                target_price: parseFloat(targetPrice),
+            }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            const errors = Object.values(data).flat().join(' | ');
+            throw new Error(errors || '생성 실패');
+        }
+
+        showFormResult('✓ 알림이 생성되었습니다!', 'success');
+        this.reset();
+        document.getElementById('current-price-ref').textContent = '코인을 선택하세요';
+
+        // 목록 새로고침
+        setTimeout(loadAlerts, 500);
+
+    } catch(error) {
+        showFormResult(`오류: ${error.message}`, 'danger');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-bell-plus me-1"></i>알림 생성';
+    }
+});
+
+function showFormResult(message, type) {
+    const el = document.getElementById('form-result');
+    el.style.display = 'block';
+    el.innerHTML = `
+        <div class="alert alert-${type} alert-dismissible py-2 px-3" role="alert">
+            ${message}
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="alert"></button>
+        </div>`;
+}
+
+// ─── 알림 토글 ───────────────────────────────────────────
+
+async function toggleAlert(alertId) {
+    try {
+        const response = await fetch(`/api/alerts/${alertId}/toggle/`, {
+            method: 'PATCH',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+        });
+        const data = await response.json();
+
+        const row = document.getElementById(`alert-row-${alertId}`);
+        if (row) {
+            row.className = `alert-row-${data.is_active ? 'active' : 'inactive'}`;
+        }
+    } catch(e) {
+        console.error('토글 실패:', e);
+        // 체크박스 상태 되돌리기
+        const cb = document.getElementById(`toggle-${alertId}`);
+        if (cb) cb.checked = !cb.checked;
+    }
+}
+
+// ─── 알림 삭제 ───────────────────────────────────────────
+
+async function deleteAlert(alertId) {
+    if (!confirm('이 알림을 삭제하시겠습니까?')) return;
+
+    try {
+        await fetch(`/api/alerts/${alertId}/`, {
+            method: 'DELETE',
+            headers: { 'X-CSRFToken': getCookie('csrftoken') },
+        });
+
+        const row = document.getElementById(`alert-row-${alertId}`);
+        if (row) {
+            row.style.opacity = '0';
+            row.style.transition = 'opacity 0.3s';
+            setTimeout(() => row.remove(), 300);
+        }
+    } catch(e) {
+        alert('삭제 중 오류가 발생했습니다.');
+    }
+}
+
+// ─── 알림 목록 새로고침 ───────────────────────────────────────────
+
+async function loadAlerts() {
+    try {
+        const response = await fetch('/api/alerts/');
+        const data = await response.json();
+
+        // 페이지네이션 응답 처리 ({count, results:[...]}) 또는 배열 직접 처리
+        const alerts = Array.isArray(data) ? data : (data.results || []);
+
+        const tbody = document.getElementById('alerts-table-body');
+        const countEl = document.getElementById('alert-count');
+        countEl.textContent = Array.isArray(data) ? alerts.length : (data.count ?? alerts.length);
+
+        if (alerts.length === 0) {
+            tbody.innerHTML = `
+                <tr><td colspan="6" class="text-center text-muted py-4">
+                    <i class="bi bi-bell-slash fs-4 d-block mb-2"></i>
+                    등록된 알림이 없습니다.
+                </td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = alerts.map(alert => `
+            <tr class="alert-row-${alert.is_active ? 'active' : 'inactive'}"
+                id="alert-row-${alert.id}">
+                <td>
+                    <span class="fw-bold">${alert.coin_symbol?.replace('USDT', '')}</span>
+                    <small class="text-muted d-block">${alert.coin_name}</small>
+                </td>
+                <td>
+                    <span class="badge badge-${alert.condition} rounded-pill px-2 py-1">
+                        ${alert.condition === 'above' ? '▲ 이상' : '▼ 이하'}
+                    </span>
+                </td>
+                <td class="fw-bold">$${parseFloat(alert.target_price).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                <td>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox"
+                               id="toggle-${alert.id}"
+                               ${alert.is_active ? 'checked' : ''}
+                               onchange="toggleAlert(${alert.id})">
+                    </div>
+                </td>
+                <td>
+                    <small class="text-muted">${alert.triggered_at ? new Date(alert.triggered_at).toLocaleString('ko-KR') : '미발동'}</small>
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteAlert(${alert.id})">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+    } catch(e) {
+        console.error('알림 목록 조회 실패:', e);
+    }
+}
+
+// ─── CSRF 헬퍼 ───────────────────────────────────────────
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// ─── 초기화 ───────────────────────────────────────────
+
+fetchLatestPrices();
+setInterval(fetchLatestPrices, 30000);
+</script>
+{% endblock %}

@@ -1,0 +1,475 @@
+{% extends 'base.html' %}
+
+{% block title %}AI 분석 - Crypto Monitor{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* ─── AI 분석 페이지 스타일 ─── */
+    .analysis-card {
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .analysis-card .card-header {
+        background: linear-gradient(135deg, #161b22 0%, #1c2128 100%);
+        border-bottom: 1px solid var(--card-border);
+        padding: 1rem 1.25rem;
+    }
+
+    /* ─── 타이핑 효과 ─── */
+    .typing-cursor {
+        display: inline-block;
+        width: 2px;
+        height: 1.2em;
+        background: var(--accent-blue);
+        animation: blink 0.8s step-end infinite;
+        vertical-align: text-bottom;
+        margin-left: 2px;
+    }
+
+    @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0; }
+    }
+
+    /* ─── AI 분석 결과 박스 ─── */
+    .ai-result-box {
+        background: linear-gradient(135deg, #0d1117 0%, #1c2128 100%);
+        border: 1px solid #388bfd33;
+        border-radius: 10px;
+        padding: 1.25rem;
+        min-height: 80px;
+        font-size: 0.95rem;
+        line-height: 1.8;
+        color: #cdd9e5;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .ai-result-box.loading {
+        border-color: var(--accent-yellow);
+        animation: border-pulse 1.5s infinite;
+    }
+
+    @keyframes border-pulse {
+        0%, 100% { border-color: #d2992233; }
+        50% { border-color: #d29922aa; }
+    }
+
+    /* ─── 코인 분석 버튼 그리드 ─── */
+    .coin-btn {
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        color: #cdd9e5;
+        border-radius: 8px;
+        padding: 0.6rem 1rem;
+        font-weight: 600;
+        transition: all 0.2s;
+        cursor: pointer;
+        text-align: left;
+        width: 100%;
+    }
+
+    .coin-btn:hover {
+        border-color: var(--accent-blue);
+        color: var(--accent-blue);
+        background: rgba(88, 166, 255, 0.05);
+    }
+
+    .coin-btn.active {
+        border-color: var(--accent-blue);
+        background: rgba(88, 166, 255, 0.1);
+        color: var(--accent-blue);
+    }
+
+    /* ─── 분석 히스토리 ─── */
+    .history-item {
+        border-left: 3px solid var(--accent-blue);
+        padding: 0.75rem 1rem;
+        background: rgba(88, 166, 255, 0.03);
+        border-radius: 0 8px 8px 0;
+        margin-bottom: 0.75rem;
+    }
+
+    .history-time {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+    }
+
+    .history-symbol {
+        font-weight: 700;
+        color: var(--accent-blue);
+        font-size: 0.85rem;
+    }
+
+    .history-text {
+        font-size: 0.9rem;
+        color: #cdd9e5;
+        margin-top: 0.25rem;
+        line-height: 1.6;
+    }
+
+    /* ─── Ollama 상태 뱃지 ─── */
+    .ollama-status {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.6rem;
+        border-radius: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h1><i class="bi bi-robot me-2 text-primary"></i>AI 시장 분석</h1>
+            <p class="text-muted mb-0">EXAONE 3.5 2.4B (Ollama) | 한국어 분석</p>
+        </div>
+        <div>
+            <span class="ollama-status" id="ollama-status-badge">
+                <span class="loading-spinner"></span> 서버 확인 중...
+            </span>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+
+    <!-- ─── 좌측: 분석 패널 ─── -->
+    <div class="col-lg-8">
+
+        <!-- 전체 시장 요약 -->
+        <div class="analysis-card mb-4">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">
+                        <i class="bi bi-globe2 me-2 text-info"></i>전체 시장 요약
+                    </h6>
+                    <button class="btn btn-sm btn-primary" id="btn-market-summary" onclick="requestMarketSummary()">
+                        <i class="bi bi-play-fill me-1"></i>분석 요청
+                    </button>
+                </div>
+            </div>
+            <div class="p-3">
+                <div class="ai-result-box" id="market-summary-result">
+                    시장 요약 버튼을 클릭하면 EXAONE 3.5가 전체 시장 동향을 분석합니다.
+                </div>
+                <div class="text-muted small mt-2 text-end" id="market-summary-time"></div>
+            </div>
+        </div>
+
+        <!-- 개별 코인 분석 -->
+        <div class="analysis-card">
+            <div class="card-header">
+                <h6 class="mb-0">
+                    <i class="bi bi-coin me-2 text-warning"></i>개별 코인 분석
+                </h6>
+            </div>
+            <div class="p-3">
+                <!-- 코인 선택 버튼 -->
+                <div class="row g-2 mb-3">
+                    {% for coin in coins %}
+                    <div class="col-6 col-md-4 col-lg-2">
+                        <button class="coin-btn" id="btn-{{ coin.symbol }}"
+                                onclick="requestCoinAnalysis('{{ coin.symbol }}', '{{ coin.name }}')">
+                            <div class="fw-bold">{{ coin.base_symbol }}</div>
+                            <div class="small text-muted">{{ coin.name }}</div>
+                        </button>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- 선택된 코인 정보 -->
+                <div id="selected-coin-info" class="mb-3" style="display:none;">
+                    <div class="d-flex align-items-center gap-3 p-2 bg-dark rounded">
+                        <span class="fw-bold text-primary" id="selected-symbol">-</span>
+                        <span id="selected-price" class="fw-bold">-</span>
+                        <span id="selected-change" class="fw-semibold">-</span>
+                        <span class="text-muted small" id="selected-volume">-</span>
+                    </div>
+                </div>
+
+                <!-- 분석 결과 -->
+                <div class="ai-result-box" id="coin-analysis-result">
+                    위에서 코인을 선택하면 EXAONE 3.5가 해당 코인의 가격 변동을 분석합니다.
+                </div>
+                <div class="text-muted small mt-2 text-end" id="coin-analysis-time"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── 우측: 분석 히스토리 ─── -->
+    <div class="col-lg-4">
+        <div class="analysis-card h-100">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">
+                        <i class="bi bi-clock-history me-2 text-secondary"></i>분석 히스토리
+                    </h6>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="clearHistory()">
+                        <i class="bi bi-trash me-1"></i>초기화
+                    </button>
+                </div>
+            </div>
+            <div class="p-3" style="max-height: 600px; overflow-y: auto;">
+                <div id="history-list">
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-clock-history fs-3 d-block mb-2"></i>
+                        분석 결과가 여기에 쌓입니다
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ─── 상태 변수 ───────────────────────────────────────────
+
+const analysisHistory = [];
+let isAnalyzing = false;
+
+// ─── 유틸리티 함수 ───────────────────────────────────────────
+
+function formatPrice(price) {
+    const p = parseFloat(price);
+    if (p >= 1000) return '$' + p.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    if (p >= 1) return '$' + p.toFixed(4);
+    return '$' + p.toFixed(6);
+}
+
+function formatVolume(vol) {
+    const v = parseFloat(vol);
+    if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+    return '$' + (v / 1e3).toFixed(1) + 'K';
+}
+
+function getCurrentTime() {
+    return new Date().toLocaleTimeString('ko-KR');
+}
+
+// ─── 타이핑 효과 ───────────────────────────────────────────
+
+/**
+ * 텍스트를 타이핑 효과로 표시
+ * @param {string} elementId - 대상 요소 ID
+ * @param {string} text - 표시할 텍스트
+ * @param {number} speed - 타이핑 속도 (ms/글자)
+ */
+function typeWriter(elementId, text, speed = 20) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+
+    el.innerHTML = '';
+    const cursor = '<span class="typing-cursor"></span>';
+    let i = 0;
+
+    const timer = setInterval(() => {
+        if (i < text.length) {
+            el.innerHTML = text.substring(0, i + 1) + cursor;
+            i++;
+        } else {
+            clearInterval(timer);
+            el.innerHTML = text;  // 커서 제거
+        }
+    }, speed);
+}
+
+// ─── 히스토리 관리 ───────────────────────────────────────────
+
+function addToHistory(type, symbol, text) {
+    analysisHistory.unshift({ type, symbol, text, time: getCurrentTime() });
+    renderHistory();
+}
+
+function renderHistory() {
+    const listEl = document.getElementById('history-list');
+
+    if (analysisHistory.length === 0) {
+        listEl.innerHTML = `
+            <div class="text-center text-muted py-4">
+                <i class="bi bi-clock-history fs-3 d-block mb-2"></i>
+                분석 결과가 여기에 쌓입니다
+            </div>`;
+        return;
+    }
+
+    listEl.innerHTML = analysisHistory.slice(0, 20).map(item => `
+        <div class="history-item">
+            <div class="d-flex justify-content-between">
+                <span class="history-symbol">
+                    ${item.type === 'market' ? '🌐 시장 전체' : `🪙 ${item.symbol}`}
+                </span>
+                <span class="history-time">${item.time}</span>
+            </div>
+            <div class="history-text">${item.text.substring(0, 150)}${item.text.length > 150 ? '...' : ''}</div>
+        </div>
+    `).join('');
+}
+
+function clearHistory() {
+    analysisHistory.length = 0;
+    renderHistory();
+}
+
+// ─── Ollama 상태 확인 ───────────────────────────────────────────
+
+async function checkOllamaStatus() {
+    const badge = document.getElementById('ollama-status-badge');
+    try {
+        const response = await fetch('/api/coins/ollama-health/');
+        const data = await response.json();
+
+        if (data.status === 'ok') {
+            badge.innerHTML = `<span class="status-dot active" style="display:inline-block;"></span> EXAONE 연결됨`;
+            badge.style.background = 'rgba(63, 185, 80, 0.15)';
+            badge.style.color = 'var(--accent-green)';
+            badge.style.border = '1px solid rgba(63, 185, 80, 0.3)';
+        } else {
+            throw new Error('서버 오류');
+        }
+    } catch (e) {
+        badge.innerHTML = `<i class="bi bi-exclamation-triangle me-1"></i>Ollama 연결 실패`;
+        badge.style.background = 'rgba(248, 81, 73, 0.15)';
+        badge.style.color = 'var(--accent-red)';
+        badge.style.border = '1px solid rgba(248, 81, 73, 0.3)';
+    }
+}
+
+// ─── 시장 요약 분석 ───────────────────────────────────────────
+
+async function requestMarketSummary() {
+    if (isAnalyzing) return;
+    isAnalyzing = true;
+
+    const btn = document.getElementById('btn-market-summary');
+    const resultEl = document.getElementById('market-summary-result');
+    const timeEl = document.getElementById('market-summary-time');
+
+    // 로딩 상태
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading-spinner me-1"></span> 분석 중...';
+    resultEl.classList.add('loading');
+    resultEl.textContent = 'EXAONE 3.5가 시장 데이터를 분석하고 있습니다...';
+
+    try {
+        const response = await fetch('/api/coins/market-summary/', {
+            headers: { 'Accept': 'application/json' },
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || '분석 실패');
+        }
+
+        resultEl.classList.remove('loading');
+        typeWriter('market-summary-result', data.summary, 15);
+        timeEl.textContent = `분석 완료: ${getCurrentTime()} (${data.coins_count}개 코인)`;
+
+        addToHistory('market', null, data.summary);
+
+    } catch (error) {
+        resultEl.classList.remove('loading');
+        resultEl.textContent = `분석 실패: ${error.message}`;
+        timeEl.textContent = getCurrentTime();
+    } finally {
+        isAnalyzing = false;
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>분석 요청';
+    }
+}
+
+// ─── 개별 코인 분석 ───────────────────────────────────────────
+
+async function requestCoinAnalysis(symbol, name) {
+    if (isAnalyzing) return;
+    isAnalyzing = true;
+
+    // 버튼 활성화 처리
+    document.querySelectorAll('.coin-btn').forEach(btn => btn.classList.remove('active'));
+    document.getElementById(`btn-${symbol}`)?.classList.add('active');
+
+    const resultEl = document.getElementById('coin-analysis-result');
+    const timeEl = document.getElementById('coin-analysis-time');
+    const infoEl = document.getElementById('selected-coin-info');
+
+    resultEl.classList.add('loading');
+    resultEl.textContent = `${name} 데이터를 분석하고 있습니다...`;
+    infoEl.style.display = 'none';
+
+    try {
+        const response = await fetch('/api/coins/ai-analysis/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({ symbol }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || '분석 실패');
+        }
+
+        // 코인 정보 표시
+        infoEl.style.display = 'block';
+        document.getElementById('selected-symbol').textContent = symbol.replace('USDT', '');
+
+        const price = parseFloat(data.price);
+        document.getElementById('selected-price').textContent = formatPrice(price);
+
+        const change = parseFloat(data.change_24h);
+        const changeEl = document.getElementById('selected-change');
+        changeEl.textContent = `${change >= 0 ? '▲' : '▼'} ${Math.abs(change).toFixed(2)}%`;
+        changeEl.className = `fw-semibold ${change >= 0 ? 'price-up' : 'price-down'}`;
+
+        // 분석 결과 타이핑 효과로 표시
+        resultEl.classList.remove('loading');
+        typeWriter('coin-analysis-result', data.analysis, 15);
+        timeEl.textContent = `분석 완료: ${getCurrentTime()}`;
+
+        addToHistory('coin', symbol.replace('USDT', ''), data.analysis);
+
+    } catch (error) {
+        resultEl.classList.remove('loading');
+        resultEl.textContent = `분석 실패: ${error.message}`;
+        timeEl.textContent = getCurrentTime();
+    } finally {
+        isAnalyzing = false;
+    }
+}
+
+// ─── CSRF 토큰 헬퍼 ───────────────────────────────────────────
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// ─── 초기화 ───────────────────────────────────────────
+
+// Ollama 상태 확인 (페이지 로드 시 + 30초마다)
+checkOllamaStatus();
+setInterval(checkOllamaStatus, 30000);
+</script>
+{% endblock %}

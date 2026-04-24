@@ -1,0 +1,109 @@
+{
+  "name": "Daily Crypto Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-node",
+      "name": "매일 오전 9시",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://django:8000/api/coins/latest/",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "fetch-coins-node",
+      "name": "코인 데이터 조회",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://django:8000/api/coins/market-summary/",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "id": "market-summary-node",
+      "name": "AI 시장 요약 요청",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 일일 리포트 이메일 HTML 생성\nconst summaryData = $input.item.json;\nconst coinsData = summaryData.coins || [];\nconst summary = summaryData.summary || '시장 요약을 불러올 수 없습니다.';\n\nconst now = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });\nconst today = new Date().toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });\n\n// 상승/하락 코인 분류\nconst rising = coinsData.filter(c => parseFloat(c.change_24h) > 0);\nconst falling = coinsData.filter(c => parseFloat(c.change_24h) <= 0);\n\n// 코인 행 생성\nconst coinRows = coinsData.map(coin => {\n  const change = parseFloat(coin.change_24h);\n  const color = change >= 0 ? '#3fb950' : '#f85149';\n  const arrow = change >= 0 ? '▲' : '▼';\n  const volume = (parseFloat(coin.volume_24h) / 1e6).toFixed(1);\n  return `\n    <tr style=\"border-bottom: 1px solid #21262d;\">\n      <td style=\"padding: 12px 8px; font-weight: 700; color: #e6edf3;\">${coin.symbol.replace('USDT', '')}</td>\n      <td style=\"padding: 12px 8px; color: #e6edf3;\">${coin.name}</td>\n      <td style=\"padding: 12px 8px; text-align: right; font-weight: 700; color: #e6edf3;\">$${parseFloat(coin.price).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>\n      <td style=\"padding: 12px 8px; text-align: right; color: ${color}; font-weight: 600;\">${arrow} ${Math.abs(change).toFixed(2)}%</td>\n      <td style=\"padding: 12px 8px; text-align: right; color: #8b949e;\">$${volume}M</td>\n    </tr>`;\n}).join('');\n\nconst htmlBody = `\n<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 0; }\n    .container { max-width: 640px; margin: 40px auto; padding: 0 20px; }\n    .header { background: linear-gradient(135deg, #161b22, #1c2128); padding: 30px; border-radius: 12px 12px 0 0; border-bottom: 2px solid #58a6ff; }\n    .header h1 { margin: 0; font-size: 22px; color: #58a6ff; }\n    .header p { margin: 8px 0 0; color: #8b949e; }\n    .body { background: #161b22; padding: 30px; border-radius: 0 0 12px 12px; }\n    .stats-grid { display: flex; gap: 16px; margin: 20px 0; }\n    .stat-box { flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; text-align: center; }\n    .stat-value { font-size: 28px; font-weight: 700; }\n    .stat-label { color: #8b949e; font-size: 12px; margin-top: 4px; }\n    .ai-box { background: #0d1117; border: 1px solid #388bfd33; border-radius: 8px; padding: 16px; margin: 20px 0; }\n    .ai-box h3 { color: #58a6ff; font-size: 14px; margin: 0 0 10px; }\n    .ai-box p { color: #cdd9e5; font-size: 14px; line-height: 1.7; margin: 0; }\n    table { width: 100%; border-collapse: collapse; margin: 20px 0; }\n    thead { background: #21262d; }\n    thead th { padding: 10px 8px; text-align: left; color: #8b949e; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }\n    .footer { text-align: center; margin-top: 30px; color: #484f58; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>📊 일일 암호화폐 시장 리포트</h1>\n      <p>${today} | ${now} 기준</p>\n    </div>\n    <div class=\"body\">\n      <div class=\"stats-grid\">\n        <div class=\"stat-box\">\n          <div class=\"stat-value\" style=\"color: #3fb950;\">${rising.length}</div>\n          <div class=\"stat-label\">상승 코인</div>\n        </div>\n        <div class=\"stat-box\">\n          <div class=\"stat-value\" style=\"color: #f85149;\">${falling.length}</div>\n          <div class=\"stat-label\">하락 코인</div>\n        </div>\n        <div class=\"stat-box\">\n          <div class=\"stat-value\" style=\"color: #58a6ff;\">${coinsData.length}</div>\n          <div class=\"stat-label\">모니터링</div>\n        </div>\n      </div>\n      \n      <div class=\"ai-box\">\n        <h3>🤖 EXAONE 3.5 AI 시장 분석</h3>\n        <p>${summary}</p>\n      </div>\n      \n      <h3 style=\"color: #e6edf3; font-size: 16px; margin: 24px 0 12px;\">코인별 현황</h3>\n      <table>\n        <thead>\n          <tr>\n            <th>심볼</th>\n            <th>이름</th>\n            <th style=\"text-align:right;\">현재가</th>\n            <th style=\"text-align:right;\">24h 변동</th>\n            <th style=\"text-align:right;\">거래량</th>\n          </tr>\n        </thead>\n        <tbody>${coinRows}</tbody>\n      </table>\n    </div>\n    <div class=\"footer\">\n      Crypto Monitor | Django + Celery + EXAONE 3.5 (Ollama)<br>\n      <a href=\"http://localhost:3000\" style=\"color: #58a6ff;\">Grafana 대시보드 보기</a>\n    </div>\n  </div>\n</body>\n</html>`;\n\nreturn [{\n  json: {\n    html_body: htmlBody,\n    subject: `[Crypto Monitor] ${today} 일일 시장 리포트`,\n    coins_count: coinsData.length,\n    rising_count: rising.length,\n    falling_count: falling.length,\n  }\n}];"
+      },
+      "id": "report-code-node",
+      "name": "리포트 HTML 생성",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $vars.SMTP_FROM }}",
+        "toEmail": "={{ $vars.ALERT_EMAIL_TO }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "html": "={{ $json.html_body }}",
+        "options": {}
+      },
+      "id": "email-report-node",
+      "name": "리포트 이메일 발송",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [1120, 300],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credential",
+          "name": "SMTP Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "매일 오전 9시": {
+      "main": [
+        [{ "node": "코인 데이터 조회", "type": "main", "index": 0 }]
+      ]
+    },
+    "코인 데이터 조회": {
+      "main": [
+        [{ "node": "AI 시장 요약 요청", "type": "main", "index": 0 }]
+      ]
+    },
+    "AI 시장 요약 요청": {
+      "main": [
+        [{ "node": "리포트 HTML 생성", "type": "main", "index": 0 }]
+      ]
+    },
+    "리포트 HTML 생성": {
+      "main": [
+        [{ "node": "리포트 이메일 발송", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "Asia/Seoul"
+  },
+  "tags": ["crypto", "daily-report"]
+}

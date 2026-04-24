@@ -1,0 +1,444 @@
+{% extends 'base.html' %}
+
+{% block title %}대시보드 - Crypto Monitor{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* ─── 코인 가격 카드 ─── */
+    .coin-card {
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 12px;
+        padding: 1.5rem;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .coin-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: linear-gradient(90deg, var(--accent-blue), transparent);
+        opacity: 0;
+        transition: opacity 0.3s;
+    }
+
+    .coin-card:hover::before { opacity: 1; }
+    .coin-card:hover { border-color: #388bfd55; }
+
+    .coin-symbol {
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+    }
+
+    .coin-name {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #e6edf3;
+    }
+
+    .coin-price {
+        font-size: 1.8rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        color: #e6edf3;
+        line-height: 1.2;
+    }
+
+    .coin-change {
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    .coin-volume {
+        font-size: 0.8rem;
+        color: var(--text-muted);
+    }
+
+    .coin-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2rem;
+        font-weight: 700;
+    }
+
+    /* ─── 자동 갱신 상태 표시 ─── */
+    .refresh-status {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+    }
+
+    .refresh-bar {
+        height: 2px;
+        background: var(--card-border);
+        border-radius: 1px;
+        overflow: hidden;
+        width: 100px;
+        display: inline-block;
+        vertical-align: middle;
+        margin-left: 6px;
+    }
+
+    .refresh-progress {
+        height: 100%;
+        background: var(--accent-blue);
+        width: 0%;
+        transition: width 0.5s linear;
+    }
+
+    /* ─── Grafana 임베드 ─── */
+    .grafana-embed {
+        width: 100%;
+        height: 500px;
+        border: 1px solid var(--card-border);
+        border-radius: 10px;
+        background: #111;
+    }
+
+    /* ─── 가격 업데이트 애니메이션 ─── */
+    @keyframes flash-green {
+        0% { background-color: rgba(63, 185, 80, 0.2); }
+        100% { background-color: transparent; }
+    }
+
+    @keyframes flash-red {
+        0% { background-color: rgba(248, 81, 73, 0.2); }
+        100% { background-color: transparent; }
+    }
+
+    .flash-up { animation: flash-green 1s ease; }
+    .flash-down { animation: flash-red 1s ease; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h1><i class="bi bi-speedometer2 me-2 text-primary"></i>실시간 코인 대시보드</h1>
+            <p class="text-muted mb-0">Binance 공개 API | 30초 자동 갱신</p>
+        </div>
+        <div class="text-end">
+            <div class="refresh-status">
+                <span class="status-dot active"></span>
+                실시간 업데이트
+                <span class="refresh-bar"><span class="refresh-progress" id="refresh-progress"></span></span>
+            </div>
+            <div class="small text-muted mt-1">마지막 갱신: <span id="last-update">-</span></div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── 코인 가격 카드 그리드 ─── -->
+<div class="row g-3 mb-4" id="coins-grid">
+    {% for coin in coins %}
+    <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
+        <div class="coin-card" id="card-{{ coin.symbol }}">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div>
+                    <div class="coin-symbol">{{ coin.base_symbol }}</div>
+                    <div class="coin-name">{{ coin.name }}</div>
+                </div>
+                <div class="coin-icon bg-primary bg-opacity-10 text-primary">
+                    {{ coin.base_symbol|slice:":1" }}
+                </div>
+            </div>
+            <div class="coin-price mb-1" id="price-{{ coin.symbol }}">
+                <span class="loading-spinner"></span>
+            </div>
+            <div class="d-flex justify-content-between align-items-center">
+                <span class="coin-change" id="change-{{ coin.symbol }}">-</span>
+                <small class="coin-volume" id="volume-{{ coin.symbol }}">-</small>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- ─── 시장 요약 ─── -->
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card p-3">
+            <div class="d-flex align-items-center">
+                <div class="me-3">
+                    <div class="coin-icon bg-success bg-opacity-10 text-success" style="width:48px;height:48px;font-size:1.5rem;">
+                        <i class="bi bi-arrow-up"></i>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-muted small">상승 코인</div>
+                    <div class="fs-2 fw-bold price-up" id="rising-count">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card p-3">
+            <div class="d-flex align-items-center">
+                <div class="me-3">
+                    <div class="coin-icon bg-danger bg-opacity-10 text-danger" style="width:48px;height:48px;font-size:1.5rem;">
+                        <i class="bi bi-arrow-down"></i>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-muted small">하락 코인</div>
+                    <div class="fs-2 fw-bold price-down" id="falling-count">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card p-3">
+            <div class="d-flex align-items-center">
+                <div class="me-3">
+                    <div class="coin-icon bg-info bg-opacity-10 text-info" style="width:48px;height:48px;font-size:1.5rem;">
+                        <i class="bi bi-activity"></i>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-muted small">평균 변동률</div>
+                    <div class="fs-2 fw-bold" id="avg-change">-</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Grafana 대시보드 임베드 ─── -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">
+            <i class="bi bi-bar-chart-line me-2 text-warning"></i>Grafana 상세 차트
+        </h6>
+        <a href="http://localhost:3000" target="_blank" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-box-arrow-up-right me-1"></i>전체 화면
+        </a>
+    </div>
+    <div class="card-body p-0" style="position:relative; min-height:500px;">
+        <div id="grafana-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#1a1a2e;z-index:2;">
+            <div class="text-center text-secondary">
+                <div class="spinner-border mb-2" role="status"></div>
+                <div style="font-size:0.85rem;">Grafana 로딩 중...</div>
+            </div>
+        </div>
+        <iframe
+            id="grafana-iframe"
+            class="grafana-embed"
+            frameborder="0"
+            style="opacity:0;transition:opacity 0.3s;"
+            title="Grafana 코인 대시보드">
+        </iframe>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ─── Grafana iframe 로더 ─────────────────────────────────────────────
+(function() {
+    const GRAFANA_URL = 'http://localhost:3000/public-dashboards/ef3dee6146d7452aa62404f434ca6f6c?theme=dark';
+    const iframe = document.getElementById('grafana-iframe');
+    const overlay = document.getElementById('grafana-loading');
+    let loaded = false;
+
+    function showIframe() {
+        if (loaded) return;
+        loaded = true;
+        iframe.style.opacity = '1';
+        overlay.style.display = 'none';
+    }
+
+    // iframe onload 이벤트로 오버레이 제거
+    iframe.addEventListener('load', function() {
+        // 로드 완료 후 짧은 딜레이로 Grafana React 앱 렌더링 대기
+        setTimeout(showIframe, 800);
+    });
+
+    // 최대 15초 후 강제 표시 (로드 이벤트 누락 대비)
+    setTimeout(showIframe, 15000);
+
+    // src 설정 (DOMContentLoaded 이후 실행 보장)
+    iframe.src = GRAFANA_URL;
+})();
+</script>
+
+<script>
+// ─── 가격 데이터 포맷 함수 ───────────────────────────────────────────
+
+/**
+ * 숫자를 달러 형식으로 포맷
+ * 1달러 이상: 소수점 2자리, 미만: 소수점 6자리
+ */
+function formatPrice(price) {
+    const p = parseFloat(price);
+    if (p >= 1000) return '$' + p.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    if (p >= 1) return '$' + p.toFixed(4);
+    return '$' + p.toFixed(6);
+}
+
+/**
+ * 거래량을 간략히 표시 (M, B 단위)
+ */
+function formatVolume(vol) {
+    const v = parseFloat(vol);
+    if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'K';
+    return '$' + v.toFixed(0);
+}
+
+// 이전 가격 캐시 (업데이트 방향 감지용)
+const prevPrices = {};
+
+// ─── 가격 카드 업데이트 ───────────────────────────────────────────
+
+function updateCoinCards(coinsData) {
+    let risingCount = 0;
+    let fallingCount = 0;
+    let totalChange = 0;
+
+    coinsData.forEach(coin => {
+        const symbol = coin.symbol;
+        const latest = coin.latest_price;
+
+        if (!latest) return;
+
+        const price = parseFloat(latest.price);
+        const change = parseFloat(latest.change_24h);
+        const volume = parseFloat(latest.volume_24h);
+
+        // 가격 카드 업데이트
+        const priceEl = document.getElementById(`price-${symbol}`);
+        const changeEl = document.getElementById(`change-${symbol}`);
+        const volumeEl = document.getElementById(`volume-${symbol}`);
+        const cardEl = document.getElementById(`card-${symbol}`);
+
+        if (priceEl) {
+            // 가격 업데이트 방향 감지
+            if (prevPrices[symbol] !== undefined) {
+                if (price > prevPrices[symbol]) {
+                    cardEl.classList.remove('flash-down');
+                    cardEl.classList.add('flash-up');
+                    setTimeout(() => cardEl.classList.remove('flash-up'), 1000);
+                } else if (price < prevPrices[symbol]) {
+                    cardEl.classList.remove('flash-up');
+                    cardEl.classList.add('flash-down');
+                    setTimeout(() => cardEl.classList.remove('flash-down'), 1000);
+                }
+            }
+            prevPrices[symbol] = price;
+
+            priceEl.textContent = formatPrice(price);
+            priceEl.className = `coin-price mb-1 ${change >= 0 ? 'price-up' : 'price-down'}`;
+        }
+
+        if (changeEl) {
+            const arrow = change >= 0 ? '▲' : '▼';
+            changeEl.textContent = `${arrow} ${Math.abs(change).toFixed(2)}%`;
+            changeEl.className = `coin-change ${change >= 0 ? 'price-up' : 'price-down'}`;
+        }
+
+        if (volumeEl) {
+            volumeEl.textContent = `거래량 ${formatVolume(volume)}`;
+        }
+
+        // 통계 집계
+        if (change > 0) risingCount++;
+        else if (change < 0) fallingCount++;
+        totalChange += change;
+    });
+
+    // 시장 요약 업데이트
+    document.getElementById('rising-count').textContent = risingCount;
+    document.getElementById('falling-count').textContent = fallingCount;
+
+    const avgChange = coinsData.length > 0 ? totalChange / coinsData.length : 0;
+    const avgEl = document.getElementById('avg-change');
+    if (avgEl) {
+        avgEl.textContent = `${avgChange >= 0 ? '+' : ''}${avgChange.toFixed(2)}%`;
+        avgEl.className = `fs-2 fw-bold ${avgChange >= 0 ? 'price-up' : 'price-down'}`;
+    }
+}
+
+// ─── 자동 갱신 로직 ───────────────────────────────────────────
+
+const REFRESH_INTERVAL = {{ refresh_interval }};  // 30초
+let refreshTimer = null;
+let progressTimer = null;
+let progressValue = 0;
+
+/**
+ * API에서 최신 가격 데이터 가져오기
+ */
+async function fetchLatestPrices() {
+    try {
+        const response = await fetch('/api/coins/latest/', {
+            headers: {'Accept': 'application/json'},
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        updateCoinCards(data);
+
+        // 마지막 갱신 시각 업데이트
+        const now = new Date();
+        document.getElementById('last-update').textContent =
+            now.toLocaleTimeString('ko-KR');
+
+    } catch (error) {
+        console.error('가격 데이터 조회 실패:', error);
+    }
+}
+
+/**
+ * 진행 바 애니메이션
+ */
+function startProgressBar() {
+    progressValue = 0;
+    const progressEl = document.getElementById('refresh-progress');
+    if (!progressEl) return;
+
+    clearInterval(progressTimer);
+    progressTimer = setInterval(() => {
+        progressValue += (500 / REFRESH_INTERVAL) * 100;  // 0.5초마다 업데이트
+        progressEl.style.width = Math.min(progressValue, 100) + '%';
+        if (progressValue >= 100) {
+            clearInterval(progressTimer);
+        }
+    }, 500);
+}
+
+// ─── 초기화 ───────────────────────────────────────────
+
+// 페이지 로드 시 즉시 가격 조회
+fetchLatestPrices();
+startProgressBar();
+
+// 30초마다 자동 갱신
+refreshTimer = setInterval(() => {
+    fetchLatestPrices();
+    startProgressBar();
+}, REFRESH_INTERVAL);
+
+// 탭 포커스 시 즉시 갱신
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        fetchLatestPrices();
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,315 @@
+services:
+  # ─────────────────────────────────────────
+  # PostgreSQL 데이터베이스
+  # ─────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: crypto_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-crypto_monitor}
+      POSTGRES_USER: ${POSTGRES_USER:-crypto_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crypto_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - crypto_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crypto_user} -d ${POSTGRES_DB:-crypto_monitor}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ─────────────────────────────────────────
+  # Redis 캐시 및 Celery 메시지 브로커
+  # ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: crypto_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - crypto_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─────────────────────────────────────────
+  # Django 웹 서버
+  # migrate + seed 는 django 단독 실행 (레이스 컨디션 방지)
+  # ─────────────────────────────────────────
+  django:
+    build:
+      context: ./django
+      dockerfile: Dockerfile
+    container_name: crypto_django
+    restart: unless-stopped
+    command: ["sh", "/app/entrypoint.sh"]
+    volumes:
+      - ./django:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - crypto_network
+    expose:
+      - "8000"
+    # Django가 완전히 기동된 후 celery/nginx 가 시작하도록 헬스체크
+    healthcheck:
+      # /health/ 는 DB를 거치지 않아 migrate 중에도 안전
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s   # migrate + seed 완료 대기
+
+  # ─────────────────────────────────────────
+  # Celery Worker
+  # django healthy 후 시작 → migrate 없이 바로 실행
+  # ─────────────────────────────────────────
+  celery_worker:
+    build:
+      context: ./django
+      dockerfile: Dockerfile
+    container_name: crypto_celery_worker
+    restart: unless-stopped
+    command: celery -A config worker --loglevel=info --concurrency=4 -Q default,coins,alerts
+    volumes:
+      - ./django:/app
+    env_file:
+      - .env
+    depends_on:
+      django:
+        condition: service_healthy   # migrate 완료 보장
+    networks:
+      - crypto_network
+
+  # ─────────────────────────────────────────
+  # Celery Beat 스케줄러
+  # django healthy 후 시작 → migrate 없이 바로 실행
+  # ─────────────────────────────────────────
+  celery_beat:
+    build:
+      context: ./django
+      dockerfile: Dockerfile
+    container_name: crypto_celery_beat
+    restart: unless-stopped
+    command: ["sh", "/app/entrypoint-beat.sh"]
+    volumes:
+      - ./django:/app
+    env_file:
+      - .env
+    depends_on:
+      django:
+        condition: service_healthy   # django_celery_beat 테이블 필요
+    networks:
+      - crypto_network
+
+  # ─────────────────────────────────────────
+  # Grafana 시각화 대시보드
+  # ─────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: crypto_grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin123}
+      # 익명 접근 허용 (대시보드 공개 뷰)
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_ANONYMOUS_ORG_NAME=Main Org.
+      # Django 템플릿 iframe 임베드 허용 (필수)
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_SECURITY_COOKIE_SAMESITE=none
+      - GF_SECURITY_COOKIE_SECURE=false
+      # 홈 대시보드 (anonymous redirect 제거 - 403 유발 방지)
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+      # SQLite WAL 모드 - DB 락 방지 (동시 요청 안정화)
+      - GF_DATABASE_WAL=true
+      # Public dashboard 섹션 활성화 (feature toggle 과 별개)
+      - GF_PUBLIC_DASHBOARDS_ENABLED=true
+      - TZ=Asia/Seoul
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - crypto_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ─────────────────────────────────────────
+  # Grafana Init: Public Dashboard 고정 토큰 자동 생성
+  # grafana healthy 후 1회만 실행
+  # ─────────────────────────────────────────
+  grafana-init:
+    image: curlimages/curl:latest
+    container_name: crypto_grafana_init
+    restart: "no"
+    depends_on:
+      grafana:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Grafana public dashboard 초기화..."
+        GURL="http://grafana:3000"
+        GAUTH="${GRAFANA_ADMIN_USER:-admin}:${GRAFANA_ADMIN_PASSWORD:-admin123}"
+        TOKEN="ef3dee6146d7452aa62404f434ca6f6c"
+        sleep 5
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+          STATUS=$$(curl -s -o /dev/null -w "%{http_code}" -u "$$GAUTH" "$$GURL/api/dashboards/uid/crypto_dashboard")
+          [ "$$STATUS" = "200" ] && break
+          echo "대시보드 대기 중... ($$i/12)"
+          sleep 5
+        done
+        EUID=$$(curl -s -u "$$GAUTH" "$$GURL/api/dashboards/uid/crypto_dashboard/public-dashboards" | grep -o '"uid":"[^"]*"' | head -1 | sed 's/"uid":"//;s/"//')
+        if [ -n "$$EUID" ]; then
+          curl -s -X DELETE -u "$$GAUTH" "$$GURL/api/dashboards/uid/crypto_dashboard/public-dashboards/$$EUID" > /dev/null
+          echo "기존 public dashboard 삭제"
+        fi
+        curl -s -X POST -u "$$GAUTH" \
+          -H "Content-Type: application/json" \
+          -d "{\"accessToken\":\"$$TOKEN\",\"isEnabled\":true,\"annotationsEnabled\":false,\"timeSelectionEnabled\":false}" \
+          "$$GURL/api/dashboards/uid/crypto_dashboard/public-dashboards" | grep -o '"accessToken":"[^"]*"'
+        echo "✓ Grafana public dashboard 준비 완료"
+    networks:
+      - crypto_network
+
+  # ─────────────────────────────────────────
+  # n8n 자동화 워크플로우
+  # ─────────────────────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: crypto_n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      # Basic Auth (n8n 1.x 이상 호환)
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-n8n_password}
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      # Webhook URL: 외부에서 접근 가능한 주소 (Docker Desktop = localhost)
+      - WEBHOOK_URL=http://localhost:5678/
+      - N8N_EDITOR_BASE_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=Asia/Seoul
+      - TZ=Asia/Seoul
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+      # 첫 실행 시 owner 계정 자동 생성 건너뜀
+      - N8N_USER_MANAGEMENT_DISABLED=false
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - crypto_network
+
+  # ─────────────────────────────────────────
+  # Ollama LLM 서버 (EXAONE 3.5 2.4B)
+  # ─────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: crypto_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - crypto_network
+    environment:
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_KEEP_ALIVE=5m
+    healthcheck:
+      # ollama 이미지에는 curl이 없으므로 ollama CLI로 확인
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ─────────────────────────────────────────
+  # Ollama Init: EXAONE 모델 자동 pull
+  # ollama 서버 healthy 후 1회만 실행
+  # ollama CLI 의 OLLAMA_HOST 로 서버 컨테이너에 연결
+  # ─────────────────────────────────────────
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: crypto_ollama_init
+    restart: "no"   # 1회만 실행
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      # ollama CLI 가 서버 컨테이너를 바라보도록 설정
+      - OLLAMA_HOST=http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    # pull 은 멱등성 보장: 이미 설치돼 있으면 빠르게 통과
+    command:
+      - |
+        echo "EXAONE 3.5 2.4B 모델 확인 중..."
+        ollama pull exaone3.5:2.4b \
+          && echo "✓ EXAONE 3.5 2.4B 준비 완료" \
+          || echo "⚠ 모델 설치 실패 - 수동 실행: docker exec crypto_ollama ollama pull exaone3.5:2.4b"
+    networks:
+      - crypto_network
+
+  # ─────────────────────────────────────────
+  # Nginx 리버스 프록시
+  # django healthy 후 시작 → 502 방지
+  # ─────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: crypto_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - static_volume:/static:ro
+      - media_volume:/media:ro
+    depends_on:
+      django:
+        condition: service_healthy
+    networks:
+      - crypto_network
+
+networks:
+  crypto_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:
+  n8n_data:
+  ollama_data:
+  static_volume:
+  media_volume:

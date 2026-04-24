@@ -1,0 +1,31 @@
+# Django 핵심
+Django==4.2.7
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+django-filter==23.5
+
+# 데이터베이스
+psycopg2-binary==2.9.9
+
+# Celery 비동기 태스크
+celery==5.3.6
+redis==5.0.1
+django-celery-beat==2.5.0
+django-celery-results==2.5.1
+
+# 환경 변수 관리
+python-decouple==3.8
+
+# 웹 서버
+gunicorn==21.2.0
+
+# HTTP 요청
+requests==2.31.0
+urllib3==2.1.0
+
+# 이미지 처리
+Pillow==10.1.0
+
+# 유틸리티
+python-dateutil==2.8.2
+pytz==2023.3

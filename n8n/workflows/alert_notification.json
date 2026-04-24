@@ -1,0 +1,134 @@
+{
+  "name": "Crypto Alert Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crypto-alert",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-node",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "crypto-alert-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-check-data",
+              "leftValue": "={{ $json.coin_symbol }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-node",
+      "name": "데이터 유효성 검사",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 알림 이메일 HTML 생성\nconst data = $input.item.json;\n\nconst conditionText = data.condition === 'above' ? '이상' : '이하';\nconst priceChange = ((data.current_price - parseFloat(data.target_price)) / parseFloat(data.target_price) * 100).toFixed(2);\nconst priceDirection = data.current_price >= parseFloat(data.target_price) ? '▲' : '▼';\nconst changeColor = data.condition === 'above' ? '#3fb950' : '#f85149';\n\nconst htmlBody = `\n<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #0d1117; color: #e6edf3; margin: 0; padding: 0; }\n    .container { max-width: 600px; margin: 40px auto; padding: 0 20px; }\n    .header { background: linear-gradient(135deg, #161b22, #1c2128); padding: 30px; border-radius: 12px 12px 0 0; border-bottom: 2px solid ${changeColor}; }\n    .header h1 { margin: 0; font-size: 24px; color: ${changeColor}; }\n    .header p { margin: 8px 0 0; color: #8b949e; }\n    .body { background: #161b22; padding: 30px; border-radius: 0 0 12px 12px; }\n    .price-box { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center; }\n    .current-price { font-size: 36px; font-weight: 700; color: ${changeColor}; }\n    .target-price { color: #8b949e; margin-top: 8px; }\n    .ai-box { background: #0d1117; border: 1px solid #388bfd33; border-radius: 8px; padding: 16px; margin: 20px 0; }\n    .ai-box h3 { color: #58a6ff; font-size: 14px; margin: 0 0 10px; }\n    .ai-box p { color: #cdd9e5; font-size: 14px; line-height: 1.7; margin: 0; }\n    .footer { text-align: center; margin-top: 30px; color: #484f58; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>${priceDirection} ${data.coin_name} 가격 알림</h1>\n      <p>${data.coin_symbol} | ${new Date().toLocaleString('ko-KR', {timeZone: 'Asia/Seoul'})}</p>\n    </div>\n    <div class=\"body\">\n      <div class=\"price-box\">\n        <div class=\"current-price\">$${parseFloat(data.current_price).toLocaleString('en-US', {minimumFractionDigits: 2})}</div>\n        <div class=\"target-price\">\n          목표가 $${parseFloat(data.target_price).toLocaleString('en-US', {minimumFractionDigits: 2})} ${conditionText} 조건 충족<br>\n          목표가 대비 ${priceDirection} ${Math.abs(priceChange)}%\n        </div>\n      </div>\n      ${data.ai_analysis ? `\n      <div class=\"ai-box\">\n        <h3>🤖 EXAONE 3.5 AI 분석</h3>\n        <p>${data.ai_analysis}</p>\n      </div>\n      ` : ''}\n    </div>\n    <div class=\"footer\">\n      Crypto Monitor | Django + EXAONE 3.5 (Ollama)\n    </div>\n  </div>\n</body>\n</html>`;\n\nreturn [{\n  json: {\n    ...data,\n    html_body: htmlBody,\n    subject: `[Crypto Monitor] ${data.coin_symbol} ${conditionText} 알림: $${parseFloat(data.current_price).toLocaleString('en-US', {minimumFractionDigits: 2})}`,\n  }\n}];"
+      },
+      "id": "code-node",
+      "name": "이메일 HTML 생성",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $vars.SMTP_FROM }}",
+        "toEmail": "={{ $vars.ALERT_EMAIL_TO }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "html": "={{ $json.html_body }}",
+        "options": {
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "id": "email-node",
+      "name": "이메일 발송",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credential",
+          "name": "SMTP Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\"status\": \"ok\", \"message\": \"알림 처리 완료\"}) }}",
+        "options": {}
+      },
+      "id": "response-node",
+      "name": "응답 반환",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          { "node": "데이터 유효성 검사", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "데이터 유효성 검사": {
+      "main": [
+        [
+          { "node": "이메일 HTML 생성", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "이메일 HTML 생성": {
+      "main": [
+        [
+          { "node": "이메일 발송", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "이메일 발송": {
+      "main": [
+        [
+          { "node": "응답 반환", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "tags": ["crypto", "alert"],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
